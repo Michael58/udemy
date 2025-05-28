@@ -25,7 +25,7 @@ import pandas as pd
 CSV_KEYS = [
     'URL',
     'Name',
-    'What is (s)he an instructor in',
+    'Instructor Subject',
     'Instructor_Photo_URL',
     'Description',
     'Total Learners',
@@ -50,7 +50,7 @@ class ScraperConfig:
     
     def __init__(
         self,
-        output_file: str = "udemy courses.csv",       # Output CSV filename
+        output_file: str = "udemy_courses.csv",       # Output CSV filename
         threads: int = 1,                             # Number of concurrent threads
         proxies: Optional[str] = None,                # Proxies string
         delay: float = 5.0,                           # Delay between page requests
@@ -103,75 +103,7 @@ class ScraperConfig:
             
         return config
 
-def get_captured_responses(driver, filter_url=None):
-    """
-    Retrieve captured responses, optionally filtering by URL.
-    Call this after the page has loaded and all API calls have completed.
-    """
-    if not hasattr(driver, 'response_data'):
-        print("No response data available. Did you call setup_network_interception?")
-        return []
-    
-    if filter_url:
-        return [resp for resp in driver.response_data if filter_url in resp['url']]
-    return driver.response_data
-
-def setup_network_interception(driver):
-    """
-    Set up network interception to capture API responses.
-    Must be called BEFORE navigating to the page.
-    """
-    # Enable necessary CDP domains
-    driver.execute_cdp_cmd('Network.enable', {})
-    
-    # Create a list to store response data
-    driver.response_data = []
-    
-    # Define a callback to handle Network.responseReceived events
-    def response_received(data):
-        request_id = data['requestId']
-        response = data['response']
-        url = response['url']
-        
-        # Only capture API responses we're interested in
-        if '/api/taught-courses' in url or '/api/instructors' in url:
-            try:
-                # Get the response body
-                response_body = driver.execute_cdp_cmd('Network.getResponseBody', {'requestId': request_id})
-                driver.response_data.append({
-                    'url': url,
-                    'status': response['status'],
-                    'body': response_body.get('body', '')
-                })
-            except Exception as e:
-                print(f"Error getting response body for {url}: {e}")
-    
-    # Add event listener for Network.responseReceived
-    driver.execute_cdp_cmd('Network.responseReceived', response_received)
-    
-def check_profile_validity(driver, url):
-    try:
-        error_greeting_elements = driver.find_elements(By.CSS_SELECTOR, 'h1[class*="error__greeting"]')
-        if error_greeting_elements and "Oops!" in error_greeting_elements[0].text:
-            print(f"Profile not found (Oops!): {url}")
-            return False
-    except:
-        pass
-
-    try:
-        # More robust selector for private profile
-        private_profile_elements = driver.find_elements(By.XPATH, 
-            "//h1[contains(text(), 'This profile is private')] | //div[contains(@class, 'private-profile--container')] | //*[contains(text(), 'profile is private') and (self::h1 or self::h2 or self::p)]"
-        )
-        if private_profile_elements:
-            print(f"Profile is private: {url}")
-            return False
-    except:
-        pass
-        
-    return True
-
-def get_webdriver(headless=False, browser_agent=None):        
+def get_webdriver(headless=False, browser_agent=None, proxy=None):        
     options = uc.ChromeOptions()
     
     # Enable analyzing API requests
@@ -183,6 +115,10 @@ def get_webdriver(headless=False, browser_agent=None):
     width = random.randint(1050, 1200)
     height = random.randint(800, 950)
     options.add_argument(f"--window-size={width},{height}")
+    
+    # Add proxy if provided
+    if proxy:
+        options.add_argument(f'--proxy-server={proxy}')
     
     if browser_agent:
         options.add_argument(f"--user-agent={browser_agent}")
@@ -205,7 +141,7 @@ def get_list_of_teachers(config):
     """
     Scrape and store list of all instructor URLs on Udemy.
     
-    @param clean_scrape - If True, re-scrape the list.
+    @param config.clean - If True, re-scrape the list.
     If False, read list from a file, if file exists, otherwise fetch the list from sitemap.
     """
     urls = []
@@ -218,34 +154,33 @@ def get_list_of_teachers(config):
         with open(config.urls_file, 'r') as f:
             lines = [line.strip() for line in f.readlines()]
             urls = lines
-            
+    
         return urls
     
+    proxies = None
+        
+    if config.proxies:
+        proxies = { 
+            "http": "http://" + config.proxies, 
+            "https": "http://" + config.proxies,
+        }
+    
     # get all instructor sitemap URLs
-    response = requests.get('https://www.udemy.com/sitemap.xml')
+    response = requests.get('https://www.udemy.com/sitemap.xml', proxies=proxies)
     sitemap_urls = []
     
-    for line in BeautifulSoup(response.text).select('loc'):
+    for line in BeautifulSoup(response.text, 'html.parser').select('loc'):
         if 'https://www.udemy.com/sitemap/instructors.xml?p=' not in line.text:
             continue
-        sitemap_urls.append(line)
+        sitemap_urls.append(line.text)
     
     # each instructor sitemap file contains about 100 instructors,
     # iterate through all of them
-    for i in sitemap_urls:
+    for url in sitemap_urls:
         
-        proxies = None
-        
-        if config.proxies:
-            proxies = { 
-                "http": config.proxies, 
-                "https": config.proxies,
-            }
-        
-        url = 'https://www.udemy.com/sitemap/instructors.xml?p=' + str(i)
         response = requests.get(url, proxies=proxies)
         
-        for line in BeautifulSoup(response.text).select('loc'):
+        for line in BeautifulSoup(response.text, 'html.parser').select('loc'):
             if 'https:' in line.text:
                 urls.append(line.text.strip())
         
@@ -347,13 +282,7 @@ def extract_courses_from_api_data(api_data):
 
 def parse_instructor(driver):
     """
-    Parses the HTML content from the Selenium WebDriver to extract instructor information.
-
-    Args:
-        driver: A Selenium WebDriver object that has loaded the instructor page.
-
-    Returns:
-        A dictionary containing the parsed instructor information.
+    Parse instructor information from currently opened page.
     """
     try:
     
@@ -368,7 +297,7 @@ def parse_instructor(driver):
     
         # Instructor Headline/Title
         headline_tag = soup.select_one('h1[class*="title-area-module--instructor-title"]')
-        instructor_data['What is (s)he an instructor in'] = headline_tag.text.strip() if headline_tag else None
+        instructor_data['Instructor Subject'] = headline_tag.text.strip() if headline_tag else None
     
         # Instructor Image URL
         image_tag = soup.select_one('img[class*="sidebar-area-module--sidebar-image"]')
@@ -439,7 +368,7 @@ def iterate_courses(driver):
         
         counter += 1
         if counter > 100:
-            raise Exception('Something went wrong')
+            raise Exception('Exceeded maximum pagination limit (100 pages)')
         
         displayed_courses = get_displayed_courses(driver)
         next_button = driver.find_element(By.CSS_SELECTOR, 'a[class*="pagination-module--next"]:not(.ud-btn-disabled)')
@@ -448,8 +377,14 @@ def iterate_courses(driver):
         WebDriverWait(driver, 30).until(lambda driver: is_next_course_page_loaded(driver, displayed_courses))
 
 def scrape_teacher(config, teacher_url, tries):
+    """
+    Return instructor data from teacher_url as a list of dicts.
+    If no courses available, return only instructor data.
+    If there is one or more courses, return one line for each course which
+    will contain all instructor information as well.
+    """
     try:
-        driver = get_webdriver(config.headless, config.browser_agent)
+        driver = get_webdriver(config.headless, config.browser_agent, config.proxies)
         driver.get(teacher_url)
         
         # Wait for page to load
@@ -459,14 +394,12 @@ def scrape_teacher(config, teacher_url, tries):
         if driver.find_elements(By.CSS_SELECTOR, 'h1[class*="error__greeting"]'):
             if 'Oops!' in driver.find_element(By.CSS_SELECTOR, 'h1[class*="error__greeting"]').text:
                 print(f"Profile not found (Oops!): {teacher_url}")
-                driver.quit()
                 return []
 
         # Check if profile is private
         private_profile_elements = driver.find_elements(By.XPATH, "//h1[contains(text(), 'This profile is private')]")
         if private_profile_elements:
             print(f"Profile is private: {teacher_url}")
-            driver.quit()
             return []
         
         instructor = parse_instructor(driver)
@@ -476,20 +409,26 @@ def scrape_teacher(config, teacher_url, tries):
         iterate_courses(driver)
         api_data = get_network_data(driver)
         courses = extract_courses_from_api_data(api_data)
-        driver.quit()
         time.sleep(config.delay)
         
-        # If no course data, return just instructor data
-        if not courses:
+        if courses:
+            # Return courses with instructor information
+            return [{**instructor, **course} for course in courses]
+        
+        if instructor['Name']:
+            # If no course data, return just instructor data
             return [instructor]
         
-        # Return courses with instructor information
-        return [{**instructor, **course} for course in courses]
+        if driver.find_elements(By.CSS_SELECTOR, 'section[aria-label="Carousel"]'):
+            # If no instructor data, and we are redirected to main page, return empty data
+            return [instructor]
+        
+        # If there is a problem scraping instructor page, re-try opening and parsing the page
+        raise Exception('Error scraping instructor data')
         
     except Exception as e:
         print(f"An error occurred in scrape_teacher for {teacher_url}: {e}")
         traceback.print_exc()
-        driver.quit()
             
         tries -= 1
         if tries == 0:
@@ -521,7 +460,7 @@ def parse_arguments():
     
 def scrape_teachers(config, urls):
     
-    if config.clean:
+    if config.clean and os.path.exists(config.output_file):
         os.remove(config.output_file)
     
     output_file_exists = os.path.exists(config.output_file)
