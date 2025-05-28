@@ -64,14 +64,14 @@ python udemy_scraper.py --clean
 
 **Use a proxy:**
 ```bash
-python udemy_scraper.py --proxies "http://user:pass@yourproxy.com:port"
+python udemy_scraper.py --proxies "ip:port"
 ```
 
 ## Command Line Options
 
 *   `--output` / `-o`: Output CSV file name (default: `"udemy courses.csv"`)
 *   `--threads` / `-t`: How many threads to use (default: `1`)
-*   `--proxies` / `-p`: Proxy server (e.g., `"http://user:pass@host:port"`)
+*   `--proxies` / `-p`: Proxy server (e.g., `"host:port"`)
 *   `--delay`: Wait time in seconds between some actions (default: `5.0`)
 *   `--clean` / `-c`: Start fresh, ignore old files.
 *   `--urls-file`: File for instructor URLs (default: `"urls.txt"`)
