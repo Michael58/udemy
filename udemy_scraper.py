@@ -394,12 +394,14 @@ def scrape_teacher(config, teacher_url, tries):
         if driver.find_elements(By.CSS_SELECTOR, 'h1[class*="error__greeting"]'):
             if 'Oops!' in driver.find_element(By.CSS_SELECTOR, 'h1[class*="error__greeting"]').text:
                 print(f"Profile not found (Oops!): {teacher_url}")
+                driver.quit()
                 return []
 
         # Check if profile is private
         private_profile_elements = driver.find_elements(By.XPATH, "//h1[contains(text(), 'This profile is private')]")
         if private_profile_elements:
             print(f"Profile is private: {teacher_url}")
+            driver.quit()
             return []
         
         instructor = parse_instructor(driver)
@@ -413,14 +415,17 @@ def scrape_teacher(config, teacher_url, tries):
         
         if courses:
             # Return courses with instructor information
+            driver.quit()
             return [{**instructor, **course} for course in courses]
         
         if instructor['Name']:
             # If no course data, return just instructor data
+            driver.quit()
             return [instructor]
         
         if driver.find_elements(By.CSS_SELECTOR, 'section[aria-label="Carousel"]'):
             # If no instructor data, and we are redirected to main page, return empty data
+            driver.quit()
             return [instructor]
         
         # If there is a problem scraping instructor page, re-try opening and parsing the page
@@ -429,6 +434,7 @@ def scrape_teacher(config, teacher_url, tries):
     except Exception as e:
         print(f"An error occurred in scrape_teacher for {teacher_url}: {e}")
         traceback.print_exc()
+        driver.quit()
             
         tries -= 1
         if tries == 0:
@@ -439,9 +445,7 @@ def scrape_teacher(config, teacher_url, tries):
         time.sleep(20 + (3-tries)*10)
             
         return scrape_teacher(config, teacher_url, tries)
-    
-    finally:
-        driver.quit()
+        
     
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Udemy Instructor Scraper')
